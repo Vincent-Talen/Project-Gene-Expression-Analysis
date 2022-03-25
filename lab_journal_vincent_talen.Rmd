@@ -1,0 +1,126 @@
+---
+title: "Lab Journal - Gene Expression Analysis"
+subtitle: "Noise exposures causing hearing loss generate proteotoxic stress and activate the proteostasis network"
+output:
+  pdf_document
+
+header-includes:
+- \pagenumbering{gobble}
+---
+\vspace{69pt}
+\begin{center}
+  \includegraphics[]{mouse.jpeg}
+\end{center}
+\hfill \textbf{Student}: Vincent Talen
+
+\hfill \textbf{Student number}: 389015
+
+\hfill \textbf{Klas}: BFV2
+
+\hfill \textbf{Class}: Bio-Informatica
+
+\hfill \textbf{Institute}: Institute for Life Science & Technology
+
+\hfill \textbf{Teacher}: Marcel Kempenaar
+
+\hfill \textbf{Date}: `r Sys.Date()`
+
+\setcounter{secnumdepth}{2}
+\newpage 
+
+\tableofcontents
+\pagenumbering{arabic}
+\newpage
+
+```{r setup, results="hide", message = F, warning = F}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+
+# Load all packages/libraries
+packages <- c("affy", "pander", "scales", "BiocParallel", "DESeq2")
+invisible(lapply(packages, library, character.only = TRUE))
+remove(packages)
+register(MulticoreParam(6))
+```
+
+# Exploratory Data Analysis
+
+## Preparing the data
+To start this project out the data set will be loaded into the memory so the statistics can be performed on it.
+The first few lines will be shown to show what the contents of the data frame are like and dim() is used to show the length of the data set.
+
+```{r dataset_loading}
+# Load in the data set into a data frame
+myData <- read.table("GSE160639_RawReadCount.txt", header = T, sep = "\t")
+# Change the int row names to the gene_id column and delete the gene_id column afterwards
+row.names(myData) <- myData$gene_id
+myData <- myData[-1]
+# Show the first few lines of the data frame
+head(myData)
+
+# Print the amount of genes and columns
+cat("Amount of genes:", dim(myData)[1], "\tColumns in dataframe", dim(myData)[2])
+```
+
+By using the str() function the structure of the dataframe/dataset can be seen. Every column consists only of int values, so only the count data.
+
+```{r dataset_structure, results="hide"}
+str(myData)
+```
+
+For later use the column indices are assigned to variables. This is so later on mistakes won't be made accidentally selecting a wrong column and to simply make it easier to use.
+
+```{r group_column_defining}
+group.names <- colnames(myData)
+SPL_70dB <- 1:4
+SPL_94dB <- 5:8
+SPL_105dB <- 9:12
+```
+
+## Early Statistics
+
+### Summary
+
+To get to know the data set more the data will be visualized in multiple ways. Seeing how everything is grouped and divided gives us a deeper understanding of what the quality of the data set is and what types of statistics will have to be performed.
+
+First a simple summary performing 6-number-statistic on the data columns will be done, this gives a summary overview of each replication for all groups.
+
+```{r summary}
+# Disable printing 'table continues' lines between split sections of the table
+panderOptions("table.continues", "")
+# Pretty print the summary of the data frame
+pander::pander(summary(myData), split.tables = 69)
+```
+
+At first glance of the summary it can be seen that the expression at the lowest (70) dB genes seem to be expressed the most and declining whilst the SPL increases. It also looks like there is a noticeable difference between each replication.
+
+### Boxplot
+
+Now a boxplot will be made for each data column, visualizing this will help quickly spot irregularities after which further detailed statistics need to be performed to do any quality control. To increase the visibility a log2 transformation will be done to show changes more informative.
+
+```{r boxplot}
+# Create a color pallet variable to use in graphs
+myColors = rep(hue_pal()(3), each = 4)
+# Plot the boxplot with log2(1) scale.
+boxplot(log2(myData + 1), ylab = "log2(Gene expression count)", 
+        outline = FALSE, col = myColors, las = 2)
+``` 
+
+\newpage
+### Density plot
+Another useful way of visualizing the data set is using a density plot, it shows a distribution of the log2-transformed count data for all samples which makes spotting problems easier.
+
+```{r density plot}
+# Plot a density plot with log2(0.1) scale and 
+# with a different color and line type for each replication
+plotDensity(log2(myData + 0.1), col=myColors,
+            lty=c(1:ncol(myData)), xlab='Log2(count)',
+            main='Expression Distribution')
+
+# Add a legend and a vertical line
+legend('topright', names(myData), lty=c(1:ncol(myData)), col=myColors)
+abline(v=-1.5, lwd=1, col='black', lty=2)
+```
+
+Looking at the density plot of the expression distribution it looks like all replications have a relatively similar amount of reads sequenced since all the peaks lie together.
+

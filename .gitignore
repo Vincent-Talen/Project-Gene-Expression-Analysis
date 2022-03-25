@@ -37,3 +37,8 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+.DS_Store
+
+# Cache and files folder
+lab_journal_vincent_talen_cache
+lab_journal_vincent_talen_files
