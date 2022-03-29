@@ -7,17 +7,21 @@ output:
 header-includes:
 - \pagenumbering{gobble}
 ---
+
+
+<!-- (Front page) -->
 \vspace{69pt}
 \begin{center}
   \includegraphics[]{mouse.jpeg}
 \end{center}
-\hfill \textbf{Student}: Vincent Talen
 
-\hfill \textbf{Student number}: 389015
+\hfill \textbf{Student}: Vincent Talen  
 
-\hfill \textbf{Klas}: BFV2
+\hfill \textbf{Student number}: 389015  
 
-\hfill \textbf{Class}: Bio-Informatica
+\hfill \textbf{Class}: BFV2
+
+\hfill \textbf{Study}: Bio-Informatica
 
 \hfill \textbf{Institute}: Institute for Life Science & Technology
 
@@ -25,31 +29,45 @@ header-includes:
 
 \hfill \textbf{Date}: `r Sys.Date()`
 
-\setcounter{secnumdepth}{2}
-\newpage 
 
+<!-- (Page 01 - Table of contents) -->
+\newpage
+\setcounter{secnumdepth}{2}
 \tableofcontents
 \pagenumbering{arabic}
-\newpage
 
-```{r setup, results="hide", message = F, warning = F}
+
+<!-- (Page 02 - R Setup) -->
+\newpage
+# R Setup
+To correctly create this document and to be able to run all the R code a few settings have to be set and libraries imported. All the code chunks need to be visible in the end pdf so the echo is set to true and to render the pdf's faster whilst developing the cache is also set to true. Multiple packages are used in this project, all of them are placed in a vector which then can be used to load all the packages on a single line with lapply. For faster rendering times when using DESeq2 a higher core amount it specified.
+
+```{r setup, results="hide", message = FALSE, warning = FALSE}
+# Set code chunks visibility in pdf output to true
 knitr::opts_chunk$set(echo = TRUE)
+# Use cache
 knitr::opts_chunk$set(cache = TRUE)
 
-# Load all packages/libraries
-packages <- c("affy", "pander", "scales", "BiocParallel", "DESeq2")
+# Create vector with all packages that will be used
+packages <- c("affy", "pander", "scales", "BiocParallel", "DESeq2", "pheatmap", 
+              "PoiClaClu", "ggplot2")
+# Load each package in the vector with lapply
 invisible(lapply(packages, library, character.only = TRUE))
+# Drop the packages variable from memory since it will not be used again
 remove(packages)
+# Set cores to be used for when using Bioc DESeq2 
 register(MulticoreParam(6))
 ```
 
-# Exploratory Data Analysis
 
+<!-- (Page 03 - Preparing the data) -->
+\newpage
+# Exploratory Data Analysis
 ## Preparing the data
 To start this project out the data set will be loaded into the memory so the statistics can be performed on it.
 The first few lines will be shown to show what the contents of the data frame are like and dim() is used to show the length of the data set.
 
-```{r dataset_loading}
+```{r loading in dataset}
 # Load in the data set into a data frame
 myData <- read.table("GSE160639_RawReadCount.txt", header = T, sep = "\t")
 # Change the int row names to the gene_id column and delete the gene_id column afterwards
@@ -62,65 +80,208 @@ head(myData)
 cat("Amount of genes:", dim(myData)[1], "\tColumns in dataframe", dim(myData)[2])
 ```
 
-By using the str() function the structure of the dataframe/dataset can be seen. Every column consists only of int values, so only the count data.
+By using the str() function the structure of the dataframe/dataset can be seen. Every column consists only of int values, so only the count data. (Not shown in PDF)
 
-```{r dataset_structure, results="hide"}
+```{r check dataset structure, results="hide"}
 str(myData)
 ```
 
-For later use the column indices are assigned to variables. This is so later on mistakes won't be made accidentally selecting a wrong column and to simply make it easier to use.
+For future use the column indices are assigned to variables. This is so mistakes won't be made later on accidentally selecting a wrong column and to simply make it easier to use.
 
-```{r group_column_defining}
-group.names <- colnames(myData)
+```{r define group columns}
 SPL_70dB <- 1:4
 SPL_94dB <- 5:8
 SPL_105dB <- 9:12
 ```
 
-## Early Statistics
 
-### Summary
-
-To get to know the data set more the data will be visualized in multiple ways. Seeing how everything is grouped and divided gives us a deeper understanding of what the quality of the data set is and what types of statistics will have to be performed.
+<!-- (Page 04 - Data summary) -->
+\newpage
+## Data Summary
+To get to know the data set more the data will be visualized in multiple ways. Seeing how everything is grouped and divided gives us a deeper understanding of what the quality of the data set is and what types of statistics will have to be performed.  
 
 First a simple summary performing 6-number-statistic on the data columns will be done, this gives a summary overview of each replication for all groups.
 
-```{r summary}
+```{r data frame summary}
 # Disable printing 'table continues' lines between split sections of the table
 panderOptions("table.continues", "")
 # Pretty print the summary of the data frame
-pander::pander(summary(myData), split.tables = 69)
+pander::pander(summary(myData), split.tables = 80)
 ```
 
-At first glance of the summary it can be seen that the expression at the lowest (70) dB genes seem to be expressed the most and declining whilst the SPL increases. It also looks like there is a noticeable difference between each replication.
+At first glance of the summary it can be seen that the expression at the lowest (70) dB genes seem to be expressed the most with the expression declining whilst the SPL increases. It also looks like there is a noticeable difference between each replication.
 
-### Boxplot
 
+<!-- (Page 05 - Boxplot) -->
+\newpage
+## Boxplot
 Now a boxplot will be made for each data column, visualizing this will help quickly spot irregularities after which further detailed statistics need to be performed to do any quality control. To increase the visibility a log2 transformation will be done to show changes more informative.
 
 ```{r boxplot}
 # Create a color pallet variable to use in graphs
 myColors = rep(hue_pal()(3), each = 4)
 # Plot the boxplot with log2(1) scale.
-boxplot(log2(myData + 1), ylab = "log2(Gene expression count)", 
-        outline = FALSE, col = myColors, las = 2)
+boxplot(log2(myData + 1), col = myColors,
+        outline = FALSE,las = 2, ylab = "log2(Gene expression count)", 
+        main="Log2(1) gene expression boxplot per sample")
 ``` 
 
+
+<!-- (Page 06 - Density plot) -->
 \newpage
-### Density plot
+## Density plot
 Another useful way of visualizing the data set is using a density plot, it shows a distribution of the log2-transformed count data for all samples which makes spotting problems easier.
 
 ```{r density plot}
-# Plot a density plot with log2(0.1) scale and 
-# with a different color and line type for each replication
+# Plot a density plot with log2(0.1) scale
+# Use a different color for each group and line type for each replication
 plotDensity(log2(myData + 0.1), col=myColors,
-            lty=c(1:ncol(myData)), xlab='Log2(count)',
-            main='Expression Distribution')
+            lty=c(1:ncol(myData)), xlab="Log2(count)",
+            main="Expression Distribution")
 
 # Add a legend and a vertical line
-legend('topright', names(myData), lty=c(1:ncol(myData)), col=myColors)
-abline(v=-1.5, lwd=1, col='black', lty=2)
+legend("topright", names(myData), lty=c(1:ncol(myData)), col=myColors)
+abline(v=-1.5, lwd=1, col="black", lty=2)
 ```
 
 Looking at the density plot of the expression distribution it looks like all replications have a relatively similar amount of reads sequenced since all the peaks lie together.
 
+
+<!-- (Page 07 - Checking read depth with barplot) -->
+\newpage
+## Normalizing the data
+### Checking read depth with barplot
+Sometimes there seems to be a difference in expression between groups even if there actually isn't, if there is a big difference in count values within the samples of a group that could be due to the read depth of the samples. To see the read depth of all samples fast, the total number of mapped reads per sample can be shown in a bar plot.
+
+```{r read depth barplot}
+# Initialize plot
+barplot(colSums(myData) / 1e6, las = 2, border = NA)
+
+# Add horizontal axis
+axis(2, tck = 1, lty = 1, col = "gray", labels = FALSE)
+
+# Create the plot
+par(new = TRUE)
+barplot(colSums(myData) / 1e6, main = "Read counts for GSE160639",
+        las = 2, col = myColors, border = NA,
+        ylab = "Sequencing depth (millions of reads)")
+```
+
+Looking at the bar plot that was created it can be seen that all the samples have a good, similar, sequencing depth. Though all the read depths are high and similar the data will still need to be normalized, because there might still be unwanted variation disrupting our analysis.
+
+
+<!-- (Page 08 - Normalizing the data with a variance stabilizing transformation) -->
+\newpage
+### Performing the data normalization with a variance stabilizing transformation
+To normalize the data the *vsc* function of the DESeq2 library will be used. First a *DESeqDataSet*-object will need to be created since that's what is needed to use the function. There are multiple techniques to normalize data but for now only normalized data from a variance stabilizing transformation will be used.
+
+```{r normalize data}
+# Create DESeqDataSet object
+ddsMat <- DESeqDataSetFromMatrix(countData = myData, design = ~ 1,
+                                 colData = data.frame(samples = names(myData)))
+# Perform normalization
+rld.dds <- vst(ddsMat)
+# 'Extract' normalized values
+rld <- assay(rld.dds)
+# Remove the 'Large DESeqTransform' object from memory
+remove(rld.dds)
+
+# Pretty print the head of the normalized data
+panderOptions("table.continues", "")
+pander::pander(head(rld), split.tables = 70)
+```
+
+Normalized data has now been obtained with values that are comparable, unlike the raw read counts. What looked like differences in expression in the count data could now with the normalized data look no different at all between the groups.
+
+
+<!-- (Page 09 - Creating a heatmap to see sample distances) -->
+\newpage
+## Creating a heatmap to see sample distances
+To see what the differences in expression between groups are, the data will be visualized with a heatmap. This heatmap will show the Euclidean distances between all samples. 
+To make a heatmap distance calculations need to be performed, for each combination of samples a distance metric is calculated that will be used to check for variation within the sample groups. The normalized data will be transposed and only after that can be used to calculate the sample distances.
+
+```{r calculate sample distances and create heatmap, fig.width=5, fig.height=4}
+# Calculate basic distance metric (using euclidean distance)
+sampledists <- dist(t(rld))
+
+# Convert the 'dist' object into a matrix for creating a heatmap
+sampleDistMatrix <- as.matrix(sampledists)
+
+# The annotation is an extra layer that will be plotted above the heatmap columns
+annotation <- data.frame(SPL = factor(rep(1:3, each = 4),
+                                      labels = c("70dB", "94dB", "105dB")))
+
+# Set the rownames of the annotation dataframe to the sample names
+rownames(annotation) <- names(myData)
+
+# Create heatmap
+pheatmap(sampleDistMatrix, main = "Euclidean Sample Distances",
+         annotation_col = annotation, show_colnames = TRUE,
+         clustering_distance_rows = sampledists,
+         clustering_distance_cols = sampledists)
+```
+
+
+<!-- (Page 10 - Create second heatmap without changed clustering) -->
+\newpage
+The resulting heatmap is not as beautiful as desired and thus does not give that much insight in the data. This is probably mainly due to the fact that all the samples are from the exact same type of tissue and the only differentiating factor is the Sound Pressure Level the mice were exposed to. With the idea that it might be more beneficial to create a heatmap that doesn't change the clustering a second one was created.
+
+```{r create second heatmap without changed clustering, fig.width=5, fig.height=3}
+# Create second heatmap without changed clustering
+pheatmap(sampleDistMatrix, main = "Sample Distances Without Clustering",
+          annotation_col = annotation, show_colnames = FALSE,
+          cluster_rows = FALSE, cluster_cols = FALSE)
+```
+
+In this second heatmap it can be better seen that there are trends between and within sample groups, almost creating borders between groups. Because there are a few samples with noticeable differentiating values from the other samples in their own group the first heatmap became less readable since there is only 1 factor that differs. One could also say that by looking at this heatmap sample A4 looks to be an outlier and might cause noise in statistics later on.
+
+
+<!-- (Page 11 - Getting Poisson distance data) -->
+\newpage
+## Using Multi-Dimensional Scaling to spot clustering
+Another way to see how distant samples are from each other is by performing Multi-Dimensional Scaling (MDS), this creates a 2D plot where it is the hope that distinct clusters are formed. What's different with MDS is that a slightly different distance metric is used; Poisson instead of the previously used Euclidean with the dist() function. To get the *Poisson Distance* data the 'PoiClaClu' library is used, it uses the raw count data (keep in mind the 'ddsMat' DataSet still contains raw count data, only the 'rld' matrix is normalized).
+
+```{r getting poisson distance data}
+# Note: uses the raw-count data, PoissonDistance performs normalization
+# set by the 'type' parameter (uses DESeq)
+dds <- assay(ddsMat)
+poisd <- PoissonDistance(t(dds), type = "deseq")
+# Extract the matrix with distances
+samplePoisDistMatrix <- as.matrix(poisd$dd)
+
+# Calculate the MDS and get the X- and Y-coordinates
+mdsPoisData <- data.frame( cmdscale(samplePoisDistMatrix) )
+# And set some better readable names for the columns
+names(mdsPoisData) <- c('x_coord', 'y_coord')
+mdsPoisData
+```
+
+Now the MDS coordinates used for plotting the distances using Poisson Distance are calculated they'll be plotted with the ggplot library.
+
+
+<!-- (Page 12 - Create MDS plot) -->
+\newpage
+```{r create MDS plot}
+# Separate the annotation factor (as the variable name is used as label)
+groups <- factor(rep(1:3, each=4), 
+                 labels = c("SPL_70dB", "SPL_94dB", "SPL_105dB"))
+coldata <- names(myData)
+
+# Create the plot using ggplot
+ggplot(mdsPoisData, aes(x_coord, y_coord, color = groups, label = coldata)) + theme_bw() +
+       geom_text(size = 4) + ggtitle('Multi Dimensional Scaling') +
+       labs(x = "Poisson Distance", y = "Poisson Distance")
+```
+
+The three different groups seem to cluster pretty nicely in the generated plot, there is a noticeable seperation between the different SPL groups' coordinates. 
+
+Based on all of the exploratory data analysis that was done it looks like all the samples are of good enough quality so that there does not need to be any further data cleaning. This marks the end of this chapter and now the 'real' analysis will start.
+
+
+<!-- (Page 13 - Starting chapter 4: Discovering DEGs) -->
+\newpage
+# Discovering Differentialy Expressed Genes (DEGs)
+Tekst
+
+## Pre-processing
+Tekst
