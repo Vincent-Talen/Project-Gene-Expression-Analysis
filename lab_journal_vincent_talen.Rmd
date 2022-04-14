@@ -12,7 +12,7 @@ header-includes:
 <!-- (Front page) -->
 \vspace{69pt}
 \begin{center}
-  \includegraphics[]{mouse.jpeg}
+  \includegraphics[]{cover_image_mouse.jpeg}
 \end{center}
 
 \hfill \textbf{Student}: Vincent Talen  
@@ -49,8 +49,8 @@ knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_chunk$set(cache = TRUE)
 
 # Create vector with all packages that will be used
-packages <- c("affy", "pander", "scales", "BiocParallel", "DESeq2", "pheatmap", 
-              "PoiClaClu", "ggplot2")
+packages <- c("affy", "pander", "scales", "BiocParallel", 
+              "DESeq2", "pheatmap", "PoiClaClu", "ggplot2")
 # Load each package in the vector with lapply
 invisible(lapply(packages, library, character.only = TRUE))
 # Drop the packages variable from memory since it will not be used again
@@ -80,18 +80,15 @@ head(myData)
 cat("Amount of genes:", dim(myData)[1], "\tColumns in dataframe", dim(myData)[2])
 ```
 
-By using the str() function the structure of the dataframe/dataset can be seen. Every column consists only of int values, so only the count data. (Not shown in PDF)
+By using the str() function the structure of the dataframe/dataset can be seen. Every column consists only of int values, so only the count data. (Resulting table not shown in PDF)
 
 ```{r check dataset structure, results="hide"}
 str(myData)
 ```
 
-For future use the column indices are assigned to variables. This is so mistakes won't be made later on accidentally selecting a wrong column and to simply make it easier to use.
-
-```{r define group columns}
-SPL_70dB <- 1:4
-SPL_94dB <- 5:8
-SPL_105dB <- 9:12
+For future use the `groups` variable is already created since it will be needed multiple times. It is used to define what group a sample belongs to.
+```{r}
+groups <- factor(rep(1:3, each=4), labels = c("70dB", "94dB", "105dB"))
 ```
 
 
@@ -183,8 +180,6 @@ ddsMat <- DESeqDataSetFromMatrix(countData = myData, design = ~ 1,
 rld.dds <- vst(ddsMat)
 # 'Extract' normalized values
 rld <- assay(rld.dds)
-# Remove the 'Large DESeqTransform' object from memory
-remove(rld.dds)
 
 # Pretty print the head of the normalized data
 panderOptions("table.continues", "")
@@ -208,8 +203,7 @@ sampledists <- dist(t(rld))
 sampleDistMatrix <- as.matrix(sampledists)
 
 # The annotation is an extra layer that will be plotted above the heatmap columns
-annotation <- data.frame(SPL = factor(rep(1:3, each = 4),
-                                      labels = c("70dB", "94dB", "105dB")))
+annotation <- data.frame(SPL = groups)
 
 # Set the rownames of the annotation dataframe to the sample names
 rownames(annotation) <- names(myData)
@@ -263,8 +257,6 @@ Now the MDS coordinates used for plotting the distances using Poisson Distance a
 \newpage
 ```{r create MDS plot}
 # Separate the annotation factor (as the variable name is used as label)
-groups <- factor(rep(1:3, each=4), 
-                 labels = c("SPL_70dB", "SPL_94dB", "SPL_105dB"))
 coldata <- names(myData)
 
 # Create the plot using ggplot
@@ -273,15 +265,99 @@ ggplot(mdsPoisData, aes(x_coord, y_coord, color = groups, label = coldata)) + th
        labs(x = "Poisson Distance", y = "Poisson Distance")
 ```
 
-The three different groups seem to cluster pretty nicely in the generated plot, there is a noticeable seperation between the different SPL groups' coordinates. 
+The three different groups seem to cluster pretty nicely in the generated plot, there is a noticeable separation between the different SPL groups' coordinates. 
 
-Based on all of the exploratory data analysis that was done it looks like all the samples are of good enough quality so that there does not need to be any further data cleaning. This marks the end of this chapter and now the 'real' analysis will start.
+Based on all of the exploratory data analysis that was done it looks like all the samples are usable so that there does not seem to be a need to do any further data cleaning. This marks the end of this chapter and now the 'real' analysis will start.
 
 
 <!-- (Page 13 - Starting chapter 4: Discovering DEGs) -->
 \newpage
-# Discovering Differentialy Expressed Genes (DEGs)
-Tekst
+# Discovering Differentially Expressed Genes (DEGs)
+The goal of this project and what will be focused on now is to try to discover differentially expressed genes, these are genes that show a difference in expression between sample groups. Simply said it's done by calculating the ratios for all genes between samples to determine the **fold-change** (FC) denoting the factor of change in expression between groups. Then, filter out only those genes that actually show a difference. While this might look like it immediately works, what's almost more important is that the DEGs are statistically significant.
+
+In the chosen research the interactive gene expression analysis kit *iGEAK* was used, which is based on the R/shiny platform, so most methods can be replicated in the environment this project is being done (RStudio).
 
 ## Pre-processing
-Tekst
+### Sample removal
+After doing the exploratory data analysis there does not seem to be a direct need to remove samples from the data set. It will however be checked if removing the A4 sample groups causes a reduction noise and lower p-values thus if it results in higher overall statistical significance. 
+<!--ADD TEXT WHEN THIS WAS TESTED WHAT THE FINDINGS WERE--> 
+
+### Filtering (partially) inactive genes
+An important step in pre-processing is to filter out (partially) inactive genes from the data set, this is even required for using the `edgeR` library.
+This step is done manually, since removing genes can be very subjective to the experiment, it might be expected (thus important) when comparing different tissues or knockout experiments. Genes with a (very) low read count (< 5) can give a very high (artificial) FC value, when comparing two samples where one has a value of 2 and the other 11, this reads as an up-regulated gene by a factor of 5.5 while it might actually just be noise.
+
+Since the chosen research also filtered very low signals, the same formula will be used. The researchers filtered the genes by requiring a minimum read count of 8 in at least 4 samples. The way it is done below here is that an index filter is created saying which genes have passed the criteria by marking them as TRUE or FALSE. For each gene/row it gets the sum of how many samples have 8 or more counts, if a gene has 4 or more samples with at least 8 counts then it returns it as TRUE. The index is then applied to the original data frame resulting in a new data frame with only the genes that match the criteria.
+
+```{r Filtering (partially) inactive genes}
+# Create filter index
+idx <- rowSums( myData >= 8 ) >= 4
+# Use the index to create the new data frame with only the genes that passed
+myData.filtered <- myData[idx,]
+```
+
+To be sure the filtering was successful, a manual check was done. It can be seen that the index has TRUE and FALSE values for each gene/row, when applying the filter and checking the data frame for which genes are left with which values it all seems to have worked great. Before filtering there were **35496** genes and after filtering there are **20315** genes left. This means that more than a third, **15181** genes to be exact, were filtered out.
+
+
+<!-- (Page 14/15 - FPM Normalization and the Fold Change value) -->
+\newpage
+### FPM Normalization
+Before using other libraries another manual step will be done, the normalization of the data will be re-done with a different technique. Performing the simple method of calculating the *fragments per million mapped fragments* (FPM) value and then log2 transforming it. This does not include the gene-length, which is not known for the data set, so it can't be used anyways. FPM is calculated by dividing the count values by the total number of reads of that sample divided by 1 million. For now all genes, not only the filtered genes are used, to later see the difference of what the results look like without filtering and with.
+
+```{r FPM normalization}
+# Perform a naive FPM normalization
+# Note: log transformation includes a pseudo count of 1
+myData.fpm <- log2( (myData / (colSums(myData) / 1e6)) + 1 )
+head(myData.fpm)
+```
+
+
+## The *Fold Change* value
+Fold Change (FC) is a measure that describes the degree of quantity change between final and original values, it is usually given as the calculated `log2` of the case/control ratio. Ratio values > 1 indicate increased expression in the experiment in relation to the control and values between 0 and 1 indicate lower expression but can have a huge range of numbers. Using log2 values to display the ratios makes it easier to distinguish between down-regulated expression `log2(ratio) < 0` and up-regulated expression `log2(ratio) > 0`.
+
+For example, gene A has an average expression of 30 mapped reads in the control group and 88 reads in the experiment group, the *ratio* case/control (`88/30`) is `2.93`. If the counts were reversed, the ratio would have been `30/88`, which is `0.34`. The previously calculated value of `2.93` means a *3-fold up regulation* while the `0.34` value means *3-fold down regulation* but as you can see the range of numbers is very different. For easier comparing the log2 values are used, the log2 transformed value of the ratio is calculated with `log2(ratio)`. In this example the log2 values would be `log2(2.93) = 1.55` and `log2(0.34) = -1.55`, these log2 fold changes compare much better and easier.
+
+### Histogram showing FC
+To visualize the FC ratio of *all* genes between the 105db (case) and the ambient (control) group a histogram is made. For each group the average of the log2(FPM) is calculated per gene and added as a new column to the previously created FPM normalized data frame. The FC values are then calculated for the 105dB group against the 70dB control group after which they are plotted in a histogram. Two ablines will also be shown in the histogram at -1 and 1, these indicate where the border is of which FC values could be considered DEGs.
+
+```{r calculating FCs}
+# Create new column for each group with the average of genes' log2(FPM) value's
+myData.fpm$avg70dB <- rowMeans(myData.fpm[1:4])
+myData.fpm$avg94dB <- rowMeans(myData.fpm[5:8])
+myData.fpm$avg105dB <- rowMeans(myData.fpm[8:12])
+
+# Calculate FC for 105dB against 70dB control group
+myData.fpm$FC105dB_70dB <- myData.fpm$avg105dB - myData.fpm$avg70dB
+
+# Plot histogram showing the FC
+hist(myData.fpm$FC105dB_70dB, breaks=100, col = "cyan",
+     main = "Histogram showing log2 FC values of all genes", 
+     xlab = "log2 FC", ylab = "FC value Frequency")
+
+# Add ablines indicating DEG territory (outside = DEG)
+abline(v = c(-1, 1), col="red")
+```
+
+Looking at the histogram almost all genes lie within -1 and 1 (the red ablines), outside the ablines the frequency is so low that they can't be seen. However this does not mean there are not any high enough FC values outside the lines! 
+
+An FC value by itself does not mean much, because if the variation *within* a group is very high, it could just be biological noise or a sequencing error. It needs to be determined if the observed FC is statistically significant. To determine significance, **t-test**s are performed using all the replicates of a group. These t-tests will however not be done manually but by using the Bioconductor package `edgeR`, it performs the t-tests and significance is then indicated by the resulting p-value. If a genes' p-value is below the alpha of 0.05 it is considered a statistically-significant differentially expressed gene (SDEG).
+
+<!-- (Page 16 - Using Bioconductor Packages for DEG Analysis: Creating a design matrix) -->
+\newpage
+## Using Bioconductor Packages for DEG Analysis
+Then the data was normalized using the `edgeRz`'s TMM (Trimmed Mean of M-values) normalization method, the resulting P-values were adjusted using the *Benjamini and Hochberg’s* approach for controlling the False Discovery Rate (FDR). Genes with an adjusted P value < 0.05 and fold change > 1.5 found by edgeR were assigned as differentially expressed genes.
+
+The goal now is to perform similar analysis as what was done in the chosen research. To perform DEG analysis on the raw count data there are a lot of packages included in Bioconductor but for this project the focus lies on `edgeR` and `DESeq2`. First the `DESeq2` package will be used and to later compare to the `edgeR` package, which will be more extensively covered because it was also used in the chosen research experiment.
+
+### Creating a `Design Matrix`
+To use any of these packages it needs to be properly specified how the samples are grouped. With more than two samples it is important to know what differences will want to be looked for. The time is not relevant for this particular experiment since all samples are taken at the same time after exposure, the main thing this project is looking for is the difference in expression caused by different sound pressure levels. Since the first group, with the 70dB SPL, is our control group nothing has to be done about the levels.
+
+```{r creating the design matrix}
+# Create a design matrix using the previously created `groups` variable
+(myDesign <- model.matrix( ~ groups))
+```
+
+
+<!-- (Page 16 - edgeR) -->
+\newpage
+### edgeR
+...
