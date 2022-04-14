@@ -50,7 +50,7 @@ knitr::opts_chunk$set(cache = TRUE)
 
 # Create vector with all packages that will be used
 packages <- c("affy", "pander", "scales", "BiocParallel", 
-              "DESeq2", "pheatmap", "PoiClaClu", "ggplot2")
+              "edgeR", "pheatmap", "PoiClaClu", "ggplot2")
 # Load each package in the vector with lapply
 invisible(lapply(packages, library, character.only = TRUE))
 # Drop the packages variable from memory since it will not be used again
@@ -103,7 +103,7 @@ First a simple summary performing 6-number-statistic on the data columns will be
 # Disable printing 'table continues' lines between split sections of the table
 panderOptions("table.continues", "")
 # Pretty print the summary of the data frame
-pander::pander(summary(myData), split.tables = 80)
+pander::pander(summary(myData), style = "rmarkdown")
 ```
 
 At first glance of the summary it can be seen that the expression at the lowest (70) dB genes seem to be expressed the most with the expression declining whilst the SPL increases. It also looks like there is a noticeable difference between each replication.
@@ -334,19 +334,17 @@ hist(myData.fpm$FC105dB_70dB, breaks=100, col = "cyan",
      xlab = "log2 FC", ylab = "FC value Frequency")
 
 # Add ablines indicating DEG territory (outside = DEG)
-abline(v = c(-1, 1), col="red")
+abline(v=c(-1, 1), lty=2, col="red")
 ```
 
-Looking at the histogram almost all genes lie within -1 and 1 (the red ablines), outside the ablines the frequency is so low that they can't be seen. However this does not mean there are not any high enough FC values outside the lines! 
+Looking at the histogram almost all genes lie within -1 and 1 (the red ablines), outside the ablines the frequency is so low that they practically can't be seen. However this does not mean there are not any high enough FC values outside the lines! 
 
 An FC value by itself does not mean much, because if the variation *within* a group is very high, it could just be biological noise or a sequencing error. It needs to be determined if the observed FC is statistically significant. To determine significance, **t-test**s are performed using all the replicates of a group. These t-tests will however not be done manually but by using the Bioconductor package `edgeR`, it performs the t-tests and significance is then indicated by the resulting p-value. If a genes' p-value is below the alpha of 0.05 it is considered a statistically-significant differentially expressed gene (SDEG).
 
 <!-- (Page 16 - Using Bioconductor Packages for DEG Analysis: Creating a design matrix) -->
 \newpage
 ## Using Bioconductor Packages for DEG Analysis
-Then the data was normalized using the `edgeRz`'s TMM (Trimmed Mean of M-values) normalization method, the resulting P-values were adjusted using the *Benjamini and Hochberg’s* approach for controlling the False Discovery Rate (FDR). Genes with an adjusted P value < 0.05 and fold change > 1.5 found by edgeR were assigned as differentially expressed genes.
-
-The goal now is to perform similar analysis as what was done in the chosen research. To perform DEG analysis on the raw count data there are a lot of packages included in Bioconductor but for this project the focus lies on `edgeR` and `DESeq2`. First the `DESeq2` package will be used and to later compare to the `edgeR` package, which will be more extensively covered because it was also used in the chosen research experiment.
+To make the DEG analysis easier and more automatic rather than performing manual steps like done above a package will be used, there are a range of packages to choose from but since the chosen research used Bioconductor's `edgeR` package, this will be the one being used. In the chosen research the data was normalized using `edgeR`'s TMM (Trimmed Mean of M-values) normalization method and the resulting P-values were adjusted using the *Benjamini and Hochberg’s* approach for controlling the False Discovery Rate (FDR). Genes with an adjusted P value < 0.05 and fold change > 1.5 found by edgeR were assigned as differentially expressed genes.
 
 ### Creating a `Design Matrix`
 To use any of these packages it needs to be properly specified how the samples are grouped. With more than two samples it is important to know what differences will want to be looked for. The time is not relevant for this particular experiment since all samples are taken at the same time after exposure, the main thing this project is looking for is the difference in expression caused by different sound pressure levels. Since the first group, with the 70dB SPL, is our control group nothing has to be done about the levels.
@@ -357,7 +355,79 @@ To use any of these packages it needs to be properly specified how the samples a
 ```
 
 
-<!-- (Page 16 - edgeR) -->
+<!-- (Page 17 - edgeR) -->
 \newpage
 ### edgeR
-...
+For `edgeR` the data needs to be in a `DGEList` object, it contains a `counts` matrix containing the count integer data and a data.frame `samples` containing information about the samples (like the group the sample belongs to). Because in #3.1 filtering was already done, the built-in filtering of edgeR does not need to be used. It was used and checked but using it did not even remove any other genes from the data. Earlier in the chapter a manual normalization was performed but now the built-in edgeR normalization will be used based on TTM instead, this is the same method as used in the chosen research. 
+
+```{r edgeR create DGEList object}
+# Create DGEList object with filtered data and group factor
+myDgeList <- DGEList(counts=myData.filtered,group=groups)
+```
+
+To further prepare the data the `calcNormFactors` function normalizes the library sizes by finding a set of scaling factors for the library sizes that minimizes the log-fold changes between the samples for most genes. A MDS plot will be made to see what the log2 FC distances are between samples.
+
+```{r edgeR normalization}
+# Perform edgeR's normalization
+myDgeList <- calcNormFactors(myDgeList)
+
+# Create MDS plot
+plotMDS(myDgeList, col=myColors, 
+        main="MDS plot based on the calculated log2 fold changes")
+```
+
+<!-- (Page 18 - edgeR: The Sequel) -->
+\newpage
+Then the `Cox-Reid profile-adjustedlikelihood (CR)` method that is based on the idea of approximate conditional likelihood is used. When given the DGEList object and the design matrix, generalized linear models are fitted. This allows valid estimation of the dispersion, since all systematic sources of variation are accounted for. To estimate common dispersion, trended dispersions and tagwise dispersions in one run the `estimateDisp()` function is called.
+
+```{r edgeR estimate dispersions}
+# Estimate all dispersions
+myDgeList <- estimateDisp(myDgeList, myDesign)
+
+# Create plot showing the dispersions
+plotBCV(myDgeList, main="edgeR plot of the several dispersion methods")
+```
+
+To finally get DEGs a few more steps need to be done with the edgeR package. To begin the `glmQLFit()` function is used which fits the negative binomial *`Generalized linear models (GLM)`* for each tag and produces an object of the `DGEGLM` class. This object can then be passed to the `glmQLFTest()` function that carries out the *`quasi-likelihood (QL)`* F-test.
+
+```{r determining differential expression}
+# Fit negative binomial GLMs
+fit <- glmQLFit(myDgeList, myDesign)
+
+# Perform QL F-test of 94dB against 70dB
+qlf.94dBvs70dB <- glmQLFTest(fit, coef=2)
+# Perform QL F-test of 105dB against 70dB
+qlf.105dBvs70dB <- glmQLFTest(fit, coef=3)
+# Perform QL F-test of 105dB against 94dB
+qlf.105dBvs94dB <- glmQLFTest(fit, contrast=c(0,-1,1))
+# Find genes that are different between any of the groups
+qlf <- glmQLFTest(fit, coef=2:3)
+
+# Show 105dB vs 70dB top DEGs
+topTags(qlf.105dBvs70dB)
+
+# Create plot showing DEGs
+deGenes <- decideTestsDGE(qlf.105dBvs70dB, p=0.05)
+deGenes <- rownames(qlf.105dBvs70dB)[as.logical(deGenes)]
+plotSmear(qlf.105dBvs70dB, de.tags=deGenes,
+          main="edgeR results; genes marked in red are DEGs")
+abline(h=c(-1, 1), col=2)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
