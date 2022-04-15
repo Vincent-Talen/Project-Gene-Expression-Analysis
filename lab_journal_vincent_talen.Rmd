@@ -49,8 +49,8 @@ knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_chunk$set(cache = TRUE)
 
 # Create vector with all packages that will be used
-packages <- c("affy", "pander", "scales", "BiocParallel", 
-              "edgeR", "pheatmap", "PoiClaClu", "ggplot2")
+packages <- c("affy", "pander", "scales", "BiocParallel", "pheatmap", 
+              "PoiClaClu", "ggplot2", "edgeR", "EnhancedVolcano", "VennDiagram")
 # Load each package in the vector with lapply
 invisible(lapply(packages, library, character.only = TRUE))
 # Drop the packages variable from memory since it will not be used again
@@ -278,10 +278,6 @@ The goal of this project and what will be focused on now is to try to discover d
 In the chosen research the interactive gene expression analysis kit *iGEAK* was used, which is based on the R/shiny platform, so most methods can be replicated in the environment this project is being done (RStudio).
 
 ## Pre-processing
-### Sample removal
-After doing the exploratory data analysis there does not seem to be a direct need to remove samples from the data set. It will however be checked if removing the A4 sample groups causes a reduction noise and lower p-values thus if it results in higher overall statistical significance. 
-<!--ADD TEXT WHEN THIS WAS TESTED WHAT THE FINDINGS WERE--> 
-
 ### Filtering (partially) inactive genes
 An important step in pre-processing is to filter out (partially) inactive genes from the data set, this is even required for using the `edgeR` library.
 This step is done manually, since removing genes can be very subjective to the experiment, it might be expected (thus important) when comparing different tissues or knockout experiments. Genes with a (very) low read count (< 5) can give a very high (artificial) FC value, when comparing two samples where one has a value of 2 and the other 11, this reads as an up-regulated gene by a factor of 5.5 while it might actually just be noise.
@@ -365,7 +361,7 @@ For `edgeR` the data needs to be in a `DGEList` object, it contains a `counts` m
 myDgeList <- DGEList(counts=myData.filtered,group=groups)
 ```
 
-To further prepare the data the `calcNormFactors` function normalizes the library sizes by finding a set of scaling factors for the library sizes that minimizes the log-fold changes between the samples for most genes. A MDS plot will be made to see what the log2 FC distances are between samples.
+To further prepare the data the `calcNormFactors` function normalizes the library sizes by finding a set of scaling factors for the library sizes that minimizes the log-fold changes between the samples for most genes. An MDS plot will be made to see what the log2 FC distances are between samples.
 
 ```{r edgeR normalization}
 # Perform edgeR's normalization
@@ -376,9 +372,9 @@ plotMDS(myDgeList, col=myColors,
         main="MDS plot based on the calculated log2 fold changes")
 ```
 
-<!-- (Page 18 - edgeR: The Sequel) -->
+<!-- (Page 18 /19- edgeR: The Sequel) -->
 \newpage
-Then the `Cox-Reid profile-adjustedlikelihood (CR)` method that is based on the idea of approximate conditional likelihood is used. When given the DGEList object and the design matrix, generalized linear models are fitted. This allows valid estimation of the dispersion, since all systematic sources of variation are accounted for. To estimate common dispersion, trended dispersions and tagwise dispersions in one run the `estimateDisp()` function is called.
+To estimate common dispersion, trended dispersions and tagwise dispersions in one run the `estimateDisp()` function is called. This function uses the `Cox-Reid profile-adjustedlikelihood (CR)` method, which is based on the idea of approximate conditional likelihood. When given the DGEList object and the design matrix, generalized linear models are fitted. This allows valid estimation of the dispersion, since all systematic sources of variation are accounted for.
 
 ```{r edgeR estimate dispersions}
 # Estimate all dispersions
@@ -388,7 +384,7 @@ myDgeList <- estimateDisp(myDgeList, myDesign)
 plotBCV(myDgeList, main="edgeR plot of the several dispersion methods")
 ```
 
-To finally get DEGs a few more steps need to be done with the edgeR package. To begin the `glmQLFit()` function is used which fits the negative binomial *`Generalized linear models (GLM)`* for each tag and produces an object of the `DGEGLM` class. This object can then be passed to the `glmQLFTest()` function that carries out the *`quasi-likelihood (QL)`* F-test.
+To finally get sets containing DEGs, a few more steps need to be done with the edgeR package. To begin the `glmQLFit()` function is used which fits the negative binomial *`Generalized linear models (GLM)`* for each tag and produces an object of the `DGEGLM` class. This object can then be passed to the `glmQLFTest()` function that carries out the *`quasi-likelihood (QL)`* F-test between a chosen group comparison.
 
 ```{r determining differential expression}
 # Fit negative binomial GLMs
@@ -400,8 +396,6 @@ qlf.94dBvs70dB <- glmQLFTest(fit, coef=2)
 qlf.105dBvs70dB <- glmQLFTest(fit, coef=3)
 # Perform QL F-test of 105dB against 94dB
 qlf.105dBvs94dB <- glmQLFTest(fit, contrast=c(0,-1,1))
-# Find genes that are different between any of the groups
-qlf <- glmQLFTest(fit, coef=2:3)
 
 # Show 105dB vs 70dB top DEGs
 topTags(qlf.105dBvs70dB)
@@ -415,19 +409,75 @@ abline(h=c(-1, 1), col=2)
 ```
 
 
+<!-- (Page 20 - Data Analysis and Visualizations of DEGs) -->
+\newpage
+# Data Analysis and Visualizations of DEGs
+Finally, after performing all the statistical steps the end is in sight for the analysis. After using `edgeR`, a few sets containing *statistically-significant* DEGs have been made. The aim now is to visualize them and hopefully connect the results to a biological relevance. 
+
+## Volcano Plots
+The first step after obtaining the data from the statistical tests is to visualize them using volcano plots. These plots will show all genes and only highlight those that are considered DEG by using thresholds for both the (adjusted) p-value and a fold-change. 
+
+The `EnhancedVolcano` library is used which will create a `ggplot2` volcano plot and is packaged into a function to create multiple plots easier, only needing to change the input data and plot title. Since the data gathered are in DGERLT class objects, inside the function the data.frame that needs to be given is in `res$table`.  In the plot the fold-change influences the spread and the significance the height. Coloring is done based on the thresholds (*-log10(0.05) for the adjusted and log2(1.5) for the log-FC*) as follows:
+
+* (dark) gray: not significant; both the FC and adjusted p-value is below the thresholds.
+* green: high FC, but adjusted p-value is below the threshold
+* blue: adjusted p-value indicates significance, but FC below the threshold
+* red: significant DEG
+
+```{r create volcano plot function}
+## Simple function for plotting a Volcano plot, returns a ggplot object
+volcano.plot <- function(res, datasetName) {
+  return(EnhancedVolcano(res$table, x = "logFC", y = "PValue",
+                         lab=rownames(res),
+                         title = paste(datasetName, "exposed cochleae"),
+                         subtitle = bquote(italic("FDR <= 0.05 and absolute FC >= 1.5")),
+                         # Change text and icon sizes
+                         labSize = 3, pointSize = 1.5, axisLabSize=10, titleLabSize=12,
+                         subtitleLabSize=8, captionLabSize=10,
+                         # Disable legend
+                         legendPosition = "none",
+                         # Set cutoffs
+                         pCutoff = 0.05, FCcutoff = 1.5))
+}
+```
 
 
+<!-- (Page 21 - Volcano Plots) -->
+\newpage
+```{r place volcano plots, out.width="85%"}
+## Using a DGELRT class object as input create the plots
+volcano.plot(res = qlf.105dBvs70dB, datasetName = "very loud (105dB) vs ambient (70dB)")
+volcano.plot(res = qlf.94dBvs70dB, datasetName = "loud (94dB) vs ambient (70dB)")
+```
 
 
+<!-- (Page 22 - Venn Diagram) -->
+\newpage
+## Venn Diagram
+The DEG sets will also be shown in a Venn-diagram, this shows the amount of shared and unique DEGs between comparisons. This also allows for the selection of a (sub)set of DEGs, e.g. only the set of DEGs shared by both comparisons.
 
+To prepare the data, the gene names of only the DEGs will be extracted and saved in vectors. This is done by collecting the row names of the data subset that only contains DEGs by filtering for `logFC > 1.5` and `PValue < 0.05`.
 
+```{r collect names of DEGs}
+## Data preparation
+degs.105dBvs70dB <- row.names(qlf.105dBvs70dB[qlf.105dBvs70dB$table$logFC > 1.5 & 
+                                              qlf.105dBvs70dB$table$PValue < 0.05,])
+degs.94dBvs70dB <- row.names(qlf.94dBvs70dB[qlf.94dBvs70dB$table$logFC > 1.5 & 
+                                            qlf.94dBvs70dB$table$PValue < 0.05,])
+```
 
+Using the length of the vectors create a Venn-diagram plot.
 
+```{r create Venn-diagram plot, out.width="85%"}
+# Create Venn-diagram plot
+venn.plot <- draw.pairwise.venn(length(degs.105dBvs70dB),
+                                length(degs.94dBvs70dB),
+                                # Calculate the intersection of the two sets
+                                length( intersect(degs.105dBvs70dB, degs.94dBvs70dB) ),
+                                category = c("very loud vs ambient", "loud vs ambient"),
+                                fill = c("light blue", "pink"), alpha = rep(0.5, 2),
+                                cat.pos = c(0, 0), scaled = F)
 
-
-
-
-
-
-
-
+# Actually plot the plot
+grid.draw(venn.plot)
+```
